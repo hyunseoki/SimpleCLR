@@ -8,10 +8,11 @@ from torch.utils.tensorboard import SummaryWriter
 from utils import save_config_file, save_checkpoint, accuracy
 
 parser = argparse.ArgumentParser(description='PyTorch SimCLR')
-parser.add_argument('--device', type=str, default='cuda:1')
+parser.add_argument('--device', type=str, default='cuda:0')
 
 parser.add_argument('--batch_size', type=int, default=1024)
 parser.add_argument('--num_epochs', type=int, default=200)
+parser.add_argument('--num_workers', type=int, default=8)
 parser.add_argument('--lr', type=int, default=0.0003)
 parser.add_argument('--weight_decay', type=float, default=1e-4)
 
@@ -30,7 +31,7 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         drop_last=True,
-        num_workers=2,
+        num_workers=args.num_workers,
         pin_memory=True,
     )
 
@@ -50,6 +51,7 @@ def main():
     scaler = GradScaler()
 
     n_iter = 0
+    best_loss = torch.inf
     for epoch_counter in range(args.num_epochs):
         for images, _ in tqdm.tqdm(train_loader): ## images (n_views x batch_size x channels x width x height)
             images = torch.cat(images, dim=0) ## images (2 x batch_size x channels x width x height)
