@@ -6,6 +6,7 @@ from model import PreModel
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.tensorboard import SummaryWriter
 from utils import save_config_file, save_checkpoint, accuracy
+from engine import AverageMeter
 
 parser = argparse.ArgumentParser(description='PyTorch SimCLR')
 parser.add_argument('--device', type=str, default='cuda:0')
@@ -19,13 +20,13 @@ parser.add_argument('--weight_decay', type=float, default=1e-4)
 parser.add_argument('--temperature', type=float, default=0.07)
 parser.add_argument('--n_views', type=int, default=2)
 
-parser.add_argument('--log_every_n_steps', type=int, default=100)
+parser.add_argument('--dataset_name', type=str, default='cifar10', choices=['stl10', 'cifar10'])
 
 
 def main():
     args = parser.parse_args()
 
-    train_dataset = get_dataset(root_folder='./data', name='cifar10', n_views=args.n_views)
+    train_dataset = get_dataset(root_folder='./data', name=args.dataset_name, n_views=args.n_views)
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -50,9 +51,13 @@ def main():
 
     scaler = GradScaler()
 
-    n_iter = 0
     best_loss = torch.inf
+
     for epoch_counter in range(args.num_epochs):
+        loss_meter = AverageMeter()
+        top1_meter = AverageMeter()
+        top5_meter = AverageMeter()
+
         for images, _ in tqdm.tqdm(train_loader): ## images (n_views x batch_size x channels x width x height)
             images = torch.cat(images, dim=0) ## images (2 x batch_size x channels x width x height)
             images = images.to(args.device)
@@ -67,29 +72,35 @@ def main():
             scaler.step(optimizer)
             scaler.update()
 
-            if n_iter % args.log_every_n_steps == 0:
-                top1, top5 = accuracy(logits, labels, topk=(1, 5))
-                writer.add_scalar('loss', loss, global_step=n_iter)
-                writer.add_scalar('acc/top1', top1[0], global_step=n_iter)
-                writer.add_scalar('acc/top5', top5[0], global_step=n_iter)
-                writer.add_scalar('learning_rate', scheduler.get_last_lr()[0], global_step=n_iter)
+            top1, top5 = accuracy(logits, labels, topk=(1, 5))
 
-            n_iter += 1
+            loss = loss.item()
+            top1 = top1.item()
+            top5 = top5.item()
+
+            loss_meter.update(val=loss, n=images.shape[0])
+            top1_meter.update(val=top1, n=images.shape[0])
+            top5_meter.update(val=top5, n=images.shape[0])
+
+        writer.add_scalar('loss', loss_meter.avg, global_step=epoch_counter)
+        writer.add_scalar('acc/top1', top1_meter.avg, global_step=epoch_counter)
+        writer.add_scalar('acc/top5', top5_meter.avg, global_step=epoch_counter)
+        writer.add_scalar('learning_rate', scheduler.get_last_lr()[0], global_step=epoch_counter)
 
         if epoch_counter >= 10:
             scheduler.step()
 
-        logging.debug(f"Epoch: {epoch_counter}\tLoss: {loss}\tTop1 accuracy: {top1[0]}")
-        logging.info("Training has finished.")
+        logging.debug(f"Epoch: {epoch_counter}\tLoss: {loss_meter.avg}\tTop1 accuracy: {top1_meter.avg}")
 
-        checkpoint_name = 'checkpoint_{:04d}.pth.tar'.format(epoch_counter)
-        save_checkpoint({
-            'epoch': epoch_counter,
-            'state_dict': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-        }, is_best=False, filename=os.path.join(writer.log_dir, checkpoint_name))
-        logging.info(f"Model checkpoint and metadata has been saved at {writer.log_dir}.")
-
+        if loss_meter.avg < best_loss:
+            best_loss = loss_meter.avg
+            checkpoint_name = 'checkpoint.pth.tar'
+            save_checkpoint({
+                'epoch': epoch_counter,
+                'state_dict': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+            }, is_best=False, filename=os.path.join(writer.log_dir, checkpoint_name))
+            logging.info(f"Model checkpoint and metadata has been saved at {writer.log_dir}.")
 
 if __name__ == '__main__':
     main()

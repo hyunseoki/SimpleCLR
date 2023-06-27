@@ -1,0 +1,6 @@
+backbone,freeze,best_acc1,
+simclr_resnet50,backbone_only,68.83617401123047,
+simclr_resnet50,None,74.580078125,
+scratch_resnet50,None,71.73828125,
+,,,
+,,,
